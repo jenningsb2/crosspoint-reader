@@ -91,6 +91,11 @@ class ClipSelectionActivity final : public Activity {
   int startMarkIdx = -1;
   bool needsPageSwitch = false;
 
+  // Double-tap detection on the Up/Down side buttons: two taps within
+  // CLIP_DOUBLE_TAP_MS jump the cursor to the top/bottom of the current page.
+  unsigned long lastDownReleaseMs = 0;
+  unsigned long lastUpReleaseMs = 0;
+
   ButtonNavigator buttonNavigator;
 
   void switchToPage(int pageIdx);
@@ -98,4 +103,6 @@ class ClipSelectionActivity final : public Activity {
   void applyWordStyle(const WordRef& word, const WordStyle& style) const;
   int lineEndForward(int idx) const;
   int lineEndBackward(int idx) const;
+  // Jump the cursor to the first / last word on the page it currently sits on.
+  void jumpToPageEdge(bool bottom);
 };

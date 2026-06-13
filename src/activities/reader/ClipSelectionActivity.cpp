@@ -170,6 +170,28 @@ void ClipSelectionActivity::loop() {
     });
   }
 
+  // Double-tap the Down (or Up) side button to jump to the bottom (or top) of the
+  // current page — handy when the sentence to highlight is near the page edge. Runs
+  // after the per-button nav above so the jump overrides that release's single step.
+  constexpr unsigned long CLIP_DOUBLE_TAP_MS = 350;
+  const unsigned long nowMs = millis();
+  if (mappedInput.wasReleased(MappedInputManager::Button::Down)) {
+    if (nowMs - lastDownReleaseMs <= CLIP_DOUBLE_TAP_MS) {
+      jumpToPageEdge(true);
+      lastDownReleaseMs = 0;  // require two fresh taps for another jump
+    } else {
+      lastDownReleaseMs = nowMs;
+    }
+  }
+  if (mappedInput.wasReleased(MappedInputManager::Button::Up)) {
+    if (nowMs - lastUpReleaseMs <= CLIP_DOUBLE_TAP_MS) {
+      jumpToPageEdge(false);
+      lastUpReleaseMs = 0;
+    } else {
+      lastUpReleaseMs = nowMs;
+    }
+  }
+
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     if (startMarkIdx == -1) {
       startMarkIdx = cursorIdx;
@@ -360,4 +382,22 @@ int ClipSelectionActivity::lineEndBackward(int idx) const {
     first = i;
   }
   return first;
+}
+
+void ClipSelectionActivity::jumpToPageEdge(bool bottom) {
+  const int total = static_cast<int>(words.size());
+  if (total == 0) return;
+  const int page = words[cursorIdx].pageIdx;
+
+  int target = cursorIdx;
+  if (bottom) {
+    for (int i = cursorIdx; i < total && words[i].pageIdx == page; ++i) target = i;
+  } else {
+    for (int i = cursorIdx; i >= 0 && words[i].pageIdx == page; --i) target = i;
+  }
+
+  if (target != cursorIdx) {
+    cursorIdx = target;  // same page — no needsPageSwitch
+    requestUpdate();
+  }
 }
