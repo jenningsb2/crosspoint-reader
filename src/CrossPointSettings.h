@@ -166,6 +166,8 @@ class CrossPointSettings {
   enum CLIPPING_STORAGE : uint8_t { SINGLE_FILE = 0, PER_BOOK = 1, CLIPPING_STORAGE_COUNT };
   // Clip selector navigation scheme
   enum CLIP_NAV_MODE : uint8_t { CLIP_NAV_DIRECTIONAL = 0, CLIP_NAV_CONTINUOUS = 1, CLIP_NAV_MODE_COUNT };
+  // Highlight export format (used by the reader's "Export Highlights" action)
+  enum EXPORT_FORMAT : uint8_t { EXPORT_TXT = 0, EXPORT_JSON = 1, EXPORT_BOTH = 2, EXPORT_FORMAT_COUNT };
   // Annotation underline visibility
   enum ANNOTATION_VISIBILITY : uint8_t { ANNOT_VISIBLE = 0, ANNOT_HIDDEN = 1, ANNOTATION_VISIBILITY_COUNT };
 
@@ -268,6 +270,7 @@ class CrossPointSettings {
   uint8_t clippingStorage = SINGLE_FILE;
   uint8_t clipNavMode = CLIP_NAV_DIRECTIONAL;
   uint8_t annotationVisibility = ANNOT_VISIBLE;
+  uint8_t exportFormat = EXPORT_BOTH;
   // Quick Resume: keep current content visible with moon icon instead of showing a static sleep screen.
   uint8_t quickResumeSleepScreen = QUICK_RESUME_NEVER;
 

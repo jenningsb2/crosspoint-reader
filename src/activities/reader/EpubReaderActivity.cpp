@@ -26,6 +26,7 @@
 #include "EpubReaderBookmarksActivity.h"
 #include "EpubReaderChapterSelectionActivity.h"
 #include "EpubReaderFootnotesActivity.h"
+#include "EpubReaderHighlightsActivity.h"
 #include "EpubReaderPercentSelectionActivity.h"
 #include "EpubReaderUtils.h"
 #include "KOReaderCredentialStore.h"
@@ -267,6 +268,11 @@ void EpubReaderActivity::loop() {
     requestUpdate();
   }
 
+  if (showExportMessage && (millis() - exportMessageTime) >= ReaderUtils::BOOKMARK_MESSAGE_DURATION_MS) {
+    showExportMessage = false;
+    requestUpdate();
+  }
+
   // Enter reader menu activity.
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     if (ignoreNextConfirmRelease) {
@@ -282,7 +288,7 @@ void EpubReaderActivity::loop() {
       const int bookProgressPercent = clampPercent(static_cast<int>(bookProgress + 0.5f));
       startActivityForResult(std::make_unique<EpubReaderMenuActivity>(
                                  renderer, mappedInput, epub->getTitle(), currentPage, totalPages, bookProgressPercent,
-                                 SETTINGS.orientation, !currentPageFootnotes.empty()),
+                                 SETTINGS.orientation, !currentPageFootnotes.empty(), !annotations.empty()),
                              [this](const ActivityResult& result) {
                                // Always apply orientation change even if the menu was cancelled
                                const auto& menu = std::get<MenuResult>(result.data);
@@ -596,6 +602,39 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
       startClipSelection();
       break;
     }
+    case EpubReaderMenuActivity::MenuAction::VIEW_HIGHLIGHTS: {
+      if (epub) {
+        startActivityForResult(std::make_unique<EpubReaderHighlightsActivity>(renderer, mappedInput, epub, annotations,
+                                                                              epub->getCachePath()),
+                               progressChangeResultHandler);
+      }
+      break;
+    }
+    case EpubReaderMenuActivity::MenuAction::EXPORT_CLIPPINGS: {
+      if (epub && !annotations.empty()) {
+        const auto& records = annotations.all();
+        std::vector<std::string> chapterTitles;
+        chapterTitles.reserve(records.size());
+        for (const auto& rec : records) {
+          const int tocIdx = epub->getTocIndexForSpineIndex(rec.sectionIdx);
+          chapterTitles.push_back(tocIdx >= 0 ? epub->getTocItem(tocIdx).title : std::string());
+        }
+        const uint8_t fmt = SETTINGS.exportFormat;
+        bool ok = false;
+        if (fmt == CrossPointSettings::EXPORT_TXT || fmt == CrossPointSettings::EXPORT_BOTH) {
+          ok |= ClippingsManager::exportText(epub->getTitle(), epub->getAuthor(), records, chapterTitles);
+        }
+        if (fmt == CrossPointSettings::EXPORT_JSON || fmt == CrossPointSettings::EXPORT_BOTH) {
+          ok |= ClippingsManager::exportJson(epub->getTitle(), epub->getAuthor(), records, chapterTitles);
+        }
+        if (ok) {
+          showExportMessage = true;
+          exportMessageTime = millis();
+        }
+      }
+      requestUpdate();
+      break;
+    }
     case EpubReaderMenuActivity::MenuAction::SYNC: {
       if (KOREADER_STORE.hasCredentials()) {
         const int currentPage = section ? section->currentPage : nextPageNumber;
@@ -679,10 +718,37 @@ void EpubReaderActivity::startClipSelection() {
     return w;
   };
 
+  // On-demand SD-card fonts keep only an 8-glyph overflow buffer, so measuring a page's
+  // words one by one re-reads glyphs from the SD card and thrashes (~35 ms/word). The normal
+  // render path avoids this by prewarming the page's glyphs resident first; do the same here.
+  auto* fcm = renderer.getFontCacheManager();
+
   for (int pi = 0; pi < pagesToLoad; ++pi) {
     section->currentPage = startPage + pi;
     auto page = section->loadPageFromSectionFile();
     if (!page) break;
+
+    // Prewarm this page's glyphs, bucketed by style variant (low 2 bits), matching the
+    // render path's per-style prewarm so only glyphs actually used are loaded.
+    if (fcm) {
+      std::string styleText[4];
+      for (const auto& el : page->elements) {
+        if (el->getTag() != TAG_PageLine) continue;
+        const auto& line = static_cast<const PageLine&>(*el);
+        if (!line.getBlock()) continue;
+        const auto& block = *line.getBlock();
+        const auto& wlist = block.getWords();
+        const auto& styles = block.getWordStyles();
+        for (int i = 0; i < static_cast<int>(wlist.size()); ++i) {
+          const auto s = i < static_cast<int>(styles.size()) ? styles[i] : EpdFontFamily::REGULAR;
+          styleText[s & 0x03] += wlist[i];
+          styleText[s & 0x03] += ' ';
+        }
+      }
+      for (uint8_t k = 0; k < 4; ++k) {
+        if (!styleText[k].empty()) fcm->prewarmCache(readerFontId, styleText[k].c_str(), 1u << k);
+      }
+    }
 
     for (const auto& el : page->elements) {
       if (el->getTag() != TAG_PageLine) continue;
@@ -728,7 +794,6 @@ void EpubReaderActivity::startClipSelection() {
     };
     auto endsWithHyphen = [](const std::string& w) -> bool { return !w.empty() && w.back() == '-'; };
     const int indentThreshold = renderer.getLineHeight(readerFontId) / 2;
-    LOG_DBG("CLIP", "Words: %d, indentThreshold: %d", words.size(), indentThreshold);
     int prevLineFirstIdx = -1;
     for (int i = 0; i < static_cast<int>(words.size()); ++i) {
       const bool isNewLine = (i == 0) || (words[i].pageIdx != words[i - 1].pageIdx) || (words[i].y != words[i - 1].y);
@@ -739,13 +804,9 @@ void EpubReaderActivity::startClipSelection() {
                             !endsWithHyphen(words[i - 1].text);
         if (byEm || byXpos) {
           words[i].paragraphStart = true;
-          LOG_DBG("CLIP", "PS w[%d] x=%d prevX=%d reason=%s text=%.20s", i, words[i].x,
-                  prevLineFirstIdx >= 0 ? words[prevLineFirstIdx].x : -1, byEm ? "em" : "xpos", words[i].text.c_str());
         }
         prevLineFirstIdx = i;
       }
-      LOG_DBG("CLIP", "W[%d] x=%d y=%d w=%d pg=%d ps=%d text=%.30s", i, words[i].x, words[i].y, words[i].w,
-              words[i].pageIdx, words[i].paragraphStart, words[i].text.c_str());
     }
   }
 
@@ -756,7 +817,7 @@ void EpubReaderActivity::startClipSelection() {
       std::make_unique<ClipSelectionActivity>(renderer, mappedInput, std::move(words), epub->getTitle(),
                                               epub->getAuthor(), chapterTitle, startPage + 1, readerFontId, *section,
                                               startPage, mTop, mLeft, ClipSelectionActivity::Config{}),
-      [this, chapterTitle, startPage](const ActivityResult& result) {
+      [this](const ActivityResult& result) {
         if (!result.isCancelled) {
           const auto& clip = std::get<ClippingResult>(result.data);
           LOG_DBG(
@@ -765,7 +826,8 @@ void EpubReaderActivity::startClipSelection() {
               clip.text.c_str(), clip.startText.c_str(), clip.endText.c_str(), clip.sectionPage, clip.endSectionPage,
               clip.wordCount, clip.beforeStartText.c_str(), clip.afterEndText.c_str());
           if (!clip.text.empty()) {
-            ClippingsManager::saveClipping(epub->getTitle(), epub->getAuthor(), chapterTitle, startPage + 1, clip.text);
+            // The highlight store is the source of truth; export to My Clippings.txt /
+            // JSON happens on demand via the reader menu, not on every create.
             if (!clip.startText.empty() && !clip.endText.empty()) {
               AnnotationsManager::AnnotationRecord rec;
               rec.sectionIdx = static_cast<uint16_t>(currentSpineIndex);
@@ -777,6 +839,7 @@ void EpubReaderActivity::startClipSelection() {
               rec.beforeStartText = clip.beforeStartText;
               rec.afterEndText = clip.afterEndText;
               rec.midText = clip.midText;
+              rec.clipText = clip.text;
               annotations.add(std::move(rec));
               annotationsDirty = true;
               annotations.save(epub->getCachePath().c_str());
@@ -1059,6 +1122,10 @@ void EpubReaderActivity::render(RenderLock&& lock) {
 
   if (showBookmarkMessage) {
     GUI.drawPopup(renderer, tr(STR_BOOKMARK_ADDED));
+  }
+
+  if (showExportMessage) {
+    GUI.drawPopup(renderer, tr(STR_HIGHLIGHTS_EXPORTED));
   }
 }
 

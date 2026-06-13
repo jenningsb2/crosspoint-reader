@@ -33,6 +33,7 @@ static void writeString(HalFile& file, const std::string& s) {
 
 bool AnnotationsManager::load(const char* bookCachePath) {
   records.clear();
+  nextId = 1;
   const std::string path = annotationsPath(bookCachePath);
 
   HalFile file;
@@ -50,10 +51,19 @@ bool AnnotationsManager::load(const char* bookCachePath) {
     file.close();
     return true;
   }
+  if (version >= 8) {
+    if (file.read(&nextId, sizeof(nextId)) != sizeof(nextId)) {
+      file.close();
+      return true;
+    }
+  }
 
   records.reserve(count);
   for (uint16_t i = 0; i < count; ++i) {
     AnnotationRecord rec;
+    if (version >= 8) {
+      if (file.read(&rec.id, sizeof(rec.id)) != sizeof(rec.id)) break;
+    }
     if (file.read(&rec.sectionIdx, sizeof(rec.sectionIdx)) != sizeof(rec.sectionIdx)) break;
     if (file.read(&rec.sectionPage, sizeof(rec.sectionPage)) != sizeof(rec.sectionPage)) break;
     if (version >= 5) {
@@ -75,11 +85,22 @@ bool AnnotationsManager::load(const char* bookCachePath) {
     if (version >= 7) {
       if (!readString(file, rec.midText)) break;
     }
+    if (version >= 8) {
+      if (!readString(file, rec.clipText)) break;
+    }
     records.push_back(std::move(rec));
   }
 
   file.close();
-  LOG_DBG("ANNOT", "Loaded %zu annotations from %s", records.size(), path.c_str());
+
+  // Upgrade legacy files (v<8): assign stable ids so every highlight is deletable
+  // and exportable. nextId advances past the highest assigned id.
+  for (auto& rec : records) {
+    if (rec.id == 0) rec.id = nextId++;
+    if (rec.id >= nextId) nextId = rec.id + 1;
+  }
+
+  LOG_DBG("ANNOT", "Loaded %zu annotations from %s (nextId=%u)", records.size(), path.c_str(), (unsigned)nextId);
   return true;
 }
 
@@ -96,8 +117,10 @@ bool AnnotationsManager::save(const char* bookCachePath) const {
   const uint16_t count = static_cast<uint16_t>(records.size());
   file.write(&version, 1);
   file.write(&count, sizeof(count));
+  file.write(&nextId, sizeof(nextId));
 
   for (const auto& rec : records) {
+    file.write(&rec.id, sizeof(rec.id));
     file.write(&rec.sectionIdx, sizeof(rec.sectionIdx));
     file.write(&rec.sectionPage, sizeof(rec.sectionPage));
     file.write(&rec.endSectionPage, sizeof(rec.endSectionPage));
@@ -107,6 +130,7 @@ bool AnnotationsManager::save(const char* bookCachePath) const {
     writeString(file, rec.beforeStartText);
     writeString(file, rec.afterEndText);
     writeString(file, rec.midText);
+    writeString(file, rec.clipText);
   }
 
   file.flush();
@@ -115,7 +139,20 @@ bool AnnotationsManager::save(const char* bookCachePath) const {
   return true;
 }
 
-void AnnotationsManager::add(AnnotationRecord record) { records.push_back(std::move(record)); }
+void AnnotationsManager::add(AnnotationRecord record) {
+  record.id = nextId++;
+  records.push_back(std::move(record));
+}
+
+size_t AnnotationsManager::removeIf(const std::function<bool(const AnnotationRecord&)>& predicate) {
+  const auto oldSize = records.size();
+  records.erase(std::remove_if(records.begin(), records.end(), predicate), records.end());
+  return oldSize - records.size();
+}
+
+bool AnnotationsManager::removeById(uint32_t id) {
+  return removeIf([id](const AnnotationRecord& rec) { return rec.id == id; }) > 0;
+}
 
 std::vector<AnnotationsManager::AnnotationRecord> AnnotationsManager::forSection(uint16_t sectionIdx) const {
   std::vector<AnnotationRecord> result;

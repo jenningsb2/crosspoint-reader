@@ -1,6 +1,7 @@
 #include "ClipSelectionActivity.h"
 
 #include <CrossPointSettings.h>
+#include <FontCacheManager.h>
 #include <GfxRenderer.h>
 #include <I18n.h>
 #include <Logging.h>
@@ -243,7 +244,19 @@ void ClipSelectionActivity::switchToPage(int pageIdx) {
   }
 
   renderer.clearScreen();
-  page->render(renderer, fontId, marginLeft, marginTop);
+  // Two-pass prewarm (scan → load glyphs resident → real render), matching the reader's
+  // render path. Without it, on-demand SD-card fonts re-read each glyph from the 8-entry
+  // overflow buffer during the draw, making the page render take seconds. The scope must
+  // stay alive THROUGH the real render — its destructor calls clearCache().
+  auto* fcm = renderer.getFontCacheManager();
+  if (fcm) {
+    auto scope = fcm->createPrewarmScope();
+    page->render(renderer, fontId, marginLeft, marginTop);  // scan pass (records text, no draw)
+    scope.endScanAndPrewarm();
+    page->render(renderer, fontId, marginLeft, marginTop);  // real render with glyphs resident
+  } else {
+    page->render(renderer, fontId, marginLeft, marginTop);
+  }
   // displayBuffer is intentionally omitted here — render() always controls the final display call
   memcpy(savedBuffer.get(), renderer.getFrameBuffer(), savedBufferSize);
   currentDisplayPage = pageIdx;

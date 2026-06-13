@@ -9,8 +9,9 @@
 #include "fontIds.h"
 
 namespace {
-constexpr int MENU_ITEMS = 3;
-const StrId menuNames[MENU_ITEMS] = {StrId::STR_CLIP_NAV_MODE, StrId::STR_ANNOT_SHOW, StrId::STR_CLIPPING_STORAGE};
+constexpr int MENU_ITEMS = 4;
+const StrId menuNames[MENU_ITEMS] = {StrId::STR_CLIP_NAV_MODE, StrId::STR_ANNOT_SHOW, StrId::STR_CLIPPING_STORAGE,
+                                     StrId::STR_EXPORT_FORMAT};
 }  // namespace
 
 void ClippingsMenuActivity::onEnter() {
@@ -61,6 +62,8 @@ void ClippingsMenuActivity::toggleSetting(int idx) {
     SETTINGS.annotationVisibility = (SETTINGS.annotationVisibility + 1) % 2;
   } else if (idx == 2) {
     SETTINGS.clippingStorage = (SETTINGS.clippingStorage + 1) % CrossPointSettings::CLIPPING_STORAGE_COUNT;
+  } else if (idx == 3) {
+    SETTINGS.exportFormat = (SETTINGS.exportFormat + 1) % CrossPointSettings::EXPORT_FORMAT_COUNT;
   }
   SETTINGS.saveToFile();
 }
@@ -88,6 +91,10 @@ void ClippingsMenuActivity::render(RenderLock&&) {
         } else if (index == 2) {
           return std::string(SETTINGS.clippingStorage == CrossPointSettings::SINGLE_FILE ? tr(STR_CLIPPING_SINGLE_FILE)
                                                                                          : tr(STR_CLIPPING_PER_BOOK));
+        } else if (index == 3) {
+          if (SETTINGS.exportFormat == CrossPointSettings::EXPORT_TXT) return std::string(tr(STR_EXPORT_FMT_TXT));
+          if (SETTINGS.exportFormat == CrossPointSettings::EXPORT_JSON) return std::string(tr(STR_EXPORT_FMT_JSON));
+          return std::string(tr(STR_EXPORT_FMT_BOTH));
         }
         return std::string("");
       },
