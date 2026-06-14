@@ -170,9 +170,10 @@ void ClipSelectionActivity::loop() {
     });
   }
 
-  // Double-tap the Down (or Up) side button to jump to the bottom (or top) of the
-  // current page — handy when the sentence to highlight is near the page edge. Runs
-  // after the per-button nav above so the jump overrides that release's single step.
+  // Double-tap a navigation button to jump to a page or line edge — handy when the text
+  // to highlight is near an edge. Down/Up jump to the bottom/top of the current page;
+  // Right/Left jump to the last/first word of the current line. Runs after the per-button
+  // nav above so the jump overrides that release's single step.
   constexpr unsigned long CLIP_DOUBLE_TAP_MS = 350;
   const unsigned long nowMs = millis();
   if (mappedInput.wasReleased(MappedInputManager::Button::Down)) {
@@ -189,6 +190,22 @@ void ClipSelectionActivity::loop() {
       lastUpReleaseMs = 0;
     } else {
       lastUpReleaseMs = nowMs;
+    }
+  }
+  if (mappedInput.wasReleased(MappedInputManager::Button::Right)) {
+    if (nowMs - lastRightReleaseMs <= CLIP_DOUBLE_TAP_MS) {
+      jumpToLineEdge(true);
+      lastRightReleaseMs = 0;
+    } else {
+      lastRightReleaseMs = nowMs;
+    }
+  }
+  if (mappedInput.wasReleased(MappedInputManager::Button::Left)) {
+    if (nowMs - lastLeftReleaseMs <= CLIP_DOUBLE_TAP_MS) {
+      jumpToLineEdge(false);
+      lastLeftReleaseMs = 0;
+    } else {
+      lastLeftReleaseMs = nowMs;
     }
   }
 
@@ -398,6 +415,25 @@ void ClipSelectionActivity::jumpToPageEdge(bool bottom) {
 
   if (target != cursorIdx) {
     cursorIdx = target;  // same page — no needsPageSwitch
+    requestUpdate();
+  }
+}
+
+void ClipSelectionActivity::jumpToLineEdge(bool end) {
+  const int total = static_cast<int>(words.size());
+  if (total == 0) return;
+  const int page = words[cursorIdx].pageIdx;
+  const int y = words[cursorIdx].y;
+
+  int target = cursorIdx;
+  if (end) {
+    for (int i = cursorIdx; i < total && words[i].pageIdx == page && words[i].y == y; ++i) target = i;
+  } else {
+    for (int i = cursorIdx; i >= 0 && words[i].pageIdx == page && words[i].y == y; --i) target = i;
+  }
+
+  if (target != cursorIdx) {
+    cursorIdx = target;  // same line — no needsPageSwitch
     requestUpdate();
   }
 }
