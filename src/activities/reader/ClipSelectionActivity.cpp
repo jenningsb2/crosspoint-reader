@@ -174,7 +174,7 @@ void ClipSelectionActivity::loop() {
   // to highlight is near an edge. Down/Up jump to the bottom/top of the current page;
   // Right/Left jump to the last/first word of the current line. Runs after the per-button
   // nav above so the jump overrides that release's single step.
-  constexpr unsigned long CLIP_DOUBLE_TAP_MS = 350;
+  constexpr unsigned long CLIP_DOUBLE_TAP_MS = 250;
   const unsigned long nowMs = millis();
   if (mappedInput.wasReleased(MappedInputManager::Button::Down)) {
     if (nowMs - lastDownReleaseMs <= CLIP_DOUBLE_TAP_MS) {
@@ -282,20 +282,28 @@ void ClipSelectionActivity::switchToPage(int pageIdx) {
     return;
   }
 
-  renderer.clearScreen();
-  // Two-pass prewarm (scan → load glyphs resident → real render), matching the reader's
-  // render path. Without it, on-demand SD-card fonts re-read each glyph from the 8-entry
-  // overflow buffer during the draw, making the page render take seconds. The scope must
-  // stay alive THROUGH the real render — its destructor calls clearCache().
+  // Prewarm this page's glyphs PERSISTENTLY (per style), not via a PrewarmScope whose
+  // destructor clears the cache. The glyphs must stay resident after this returns because
+  // render() -> drawHighlights() redraws the cursor/selection words on every cursor move;
+  // with on-demand SD-card fonts a cold redraw of a large selection (e.g. a top↔bottom
+  // jump) re-reads each glyph from the 8-entry overflow buffer and takes seconds. Prewarm
+  // from the activity's own word list — exactly the glyphs drawHighlights will redraw.
   auto* fcm = renderer.getFontCacheManager();
   if (fcm) {
-    auto scope = fcm->createPrewarmScope();
-    page->render(renderer, fontId, marginLeft, marginTop);  // scan pass (records text, no draw)
-    scope.endScanAndPrewarm();
-    page->render(renderer, fontId, marginLeft, marginTop);  // real render with glyphs resident
-  } else {
-    page->render(renderer, fontId, marginLeft, marginTop);
+    std::string styleText[4];
+    for (const auto& w : words) {
+      if (w.pageIdx != pageIdx) continue;
+      const uint8_t k = static_cast<uint8_t>(w.style & 0x03);
+      styleText[k] += w.text;
+      styleText[k] += ' ';
+    }
+    for (uint8_t k = 0; k < 4; ++k) {
+      if (!styleText[k].empty()) fcm->prewarmCache(fontId, styleText[k].c_str(), 1u << k);
+    }
   }
+
+  renderer.clearScreen();
+  page->render(renderer, fontId, marginLeft, marginTop);  // resident glyphs -> fast
   // displayBuffer is intentionally omitted here — render() always controls the final display call
   memcpy(savedBuffer.get(), renderer.getFrameBuffer(), savedBufferSize);
   currentDisplayPage = pageIdx;
