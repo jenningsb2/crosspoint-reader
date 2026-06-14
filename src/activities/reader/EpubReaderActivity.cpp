@@ -37,6 +37,7 @@
 #include "ReaderUtils.h"
 #include "RecentBooksStore.h"
 #include "WordRef.h"
+#include "activities/util/ConfirmationActivity.h"
 #include "clippings/ClippingsManager.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
@@ -573,22 +574,33 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
       return;
     }
     case EpubReaderMenuActivity::MenuAction::DELETE_CACHE: {
-      {
-        RenderLock lock(*this);
-        if (epub && section) {
-          uint16_t backupSpine = currentSpineIndex;
-          uint16_t backupPage = section->currentPage;
-          uint16_t backupPageCount = section->pageCount;
-          section.reset();
-          epub->clearCache();
-          epub->setupCacheDir();
-          if (!saveProgress(backupSpine, backupPage, backupPageCount)) {
-            LOG_ERR("ERS", "Failed to save progress before cache clear");
-          }
-        }
-      }
-      onGoHome();
-      return;
+      // Highlights live in the book cache, so confirm first and name how many will be lost.
+      char body[192];
+      snprintf(body, sizeof(body), tr(STR_DELETE_CACHE_CONFIRM), static_cast<int>(annotations.size()));
+      startActivityForResult(
+          std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_DELETE_CACHE), std::string(body)),
+          [this](const ActivityResult& result) {
+            if (result.isCancelled) {
+              requestUpdate();
+              return;
+            }
+            {
+              RenderLock lock(*this);
+              if (epub && section) {
+                uint16_t backupSpine = currentSpineIndex;
+                uint16_t backupPage = section->currentPage;
+                uint16_t backupPageCount = section->pageCount;
+                section.reset();
+                epub->clearCache();
+                epub->setupCacheDir();
+                if (!saveProgress(backupSpine, backupPage, backupPageCount)) {
+                  LOG_ERR("ERS", "Failed to save progress before cache clear");
+                }
+              }
+            }
+            onGoHome();
+          });
+      break;
     }
     case EpubReaderMenuActivity::MenuAction::SCREENSHOT: {
       {
@@ -817,7 +829,7 @@ void EpubReaderActivity::startClipSelection() {
       std::make_unique<ClipSelectionActivity>(renderer, mappedInput, std::move(words), epub->getTitle(),
                                               epub->getAuthor(), chapterTitle, startPage + 1, readerFontId, *section,
                                               startPage, mTop, mLeft, ClipSelectionActivity::Config{}),
-      [this](const ActivityResult& result) {
+      [this, chapterTitle](const ActivityResult& result) {
         if (!result.isCancelled) {
           const auto& clip = std::get<ClippingResult>(result.data);
           LOG_DBG(
@@ -826,8 +838,9 @@ void EpubReaderActivity::startClipSelection() {
               clip.text.c_str(), clip.startText.c_str(), clip.endText.c_str(), clip.sectionPage, clip.endSectionPage,
               clip.wordCount, clip.beforeStartText.c_str(), clip.afterEndText.c_str());
           if (!clip.text.empty()) {
-            // The highlight store is the source of truth; export to My Clippings.txt /
-            // JSON happens on demand via the reader menu, not on every create.
+            // The on-device store is the source of truth (deletion-accurate; the clean
+            // per-book export reads from it on demand). Independently, when the Kindle
+            // log is enabled, append this highlight once to /My Clippings.txt now.
             if (!clip.startText.empty() && !clip.endText.empty()) {
               AnnotationsManager::AnnotationRecord rec;
               rec.sectionIdx = static_cast<uint16_t>(currentSpineIndex);
@@ -844,6 +857,10 @@ void EpubReaderActivity::startClipSelection() {
               annotationsDirty = true;
               annotations.save(epub->getCachePath().c_str());
               annotationsDirty = false;
+            }
+            if (SETTINGS.clippingLog) {
+              ClippingsManager::appendToLog(epub->getTitle(), epub->getAuthor(), chapterTitle, clip.sectionPage + 1,
+                                            clip.text);
             }
           }
         }

@@ -1,7 +1,6 @@
 #include "ClippingsManager.h"
 
 #include <ArduinoJson.h>
-#include <CrossPointSettings.h>
 #include <HalStorage.h>
 #include <Logging.h>
 #include <common/FsApiConstants.h>
@@ -26,10 +25,7 @@ static std::string sanitizeForFilename(const std::string& title) {
 }
 
 std::string ClippingsManager::resolveClippingPath(const std::string& bookTitle) {
-  if (SETTINGS.clippingStorage == CrossPointSettings::PER_BOOK) {
-    return std::string(CLIPPINGS_DIR) + "/" + sanitizeForFilename(bookTitle) + ".txt";
-  }
-  return CLIPPINGS_PATH;
+  return std::string(CLIPPINGS_DIR) + "/" + sanitizeForFilename(bookTitle) + ".txt";
 }
 
 std::string ClippingsManager::resolveJsonPath(const std::string& bookTitle) {
@@ -56,20 +52,35 @@ static std::string formatTextBlock(const std::string& bookTitle, const std::stri
   return block;
 }
 
+// Kindle-style running log: append one block to the shared /My Clippings.txt.
+bool ClippingsManager::appendToLog(const std::string& bookTitle, const std::string& author,
+                                   const std::string& chapterTitle, int pageNumber, const std::string& selectedText) {
+  HalFile file = Storage.open(CLIPPINGS_PATH, O_RDWR | O_CREAT | O_AT_END);
+  if (!file) {
+    LOG_ERR("CLIP", "Failed to open %s for append", CLIPPINGS_PATH);
+    return false;
+  }
+
+  const std::string block = formatTextBlock(bookTitle, author, chapterTitle, pageNumber, selectedText);
+  const bool ok = file.write(block.data(), block.size()) == block.size();
+  file.flush();
+  file.close();
+  if (!ok) {
+    LOG_ERR("CLIP", "Failed to append clipping to %s (SD full or removed?)", CLIPPINGS_PATH);
+    return false;
+  }
+  LOG_DBG("CLIP", "Appended clipping to %s", CLIPPINGS_PATH);
+  return true;
+}
+
 bool ClippingsManager::exportText(const std::string& bookTitle, const std::string& author,
                                   const std::vector<AnnotationsManager::AnnotationRecord>& records,
                                   const std::vector<std::string>& chapterTitles) {
+  Storage.mkdir(CLIPPINGS_DIR);
   const std::string path = resolveClippingPath(bookTitle);
 
-  if (SETTINGS.clippingStorage == CrossPointSettings::PER_BOOK) {
-    Storage.mkdir(CLIPPINGS_DIR);
-  }
-
-  // PER_BOOK: regenerate the book's file (idempotent). SINGLE_FILE: append so other
-  // books' clippings in the shared log are preserved (Kindle semantics).
-  const int flags = SETTINGS.clippingStorage == CrossPointSettings::PER_BOOK ? (O_RDWR | O_CREAT | O_TRUNC)
-                                                                             : (O_RDWR | O_CREAT | O_AT_END);
-  HalFile file = Storage.open(path.c_str(), flags);
+  // Always regenerate the per-book file (idempotent, deletion-accurate).
+  HalFile file = Storage.open(path.c_str(), O_RDWR | O_CREAT | O_TRUNC);
   if (!file) {
     LOG_ERR("CLIP", "Failed to open %s for export", path.c_str());
     return false;

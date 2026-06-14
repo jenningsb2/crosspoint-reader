@@ -190,9 +190,8 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
                             "moveFinishedToReadFolder", StrId::STR_CAT_SYSTEM),
 
         // --- Clippings ---
-        SettingInfo::Enum(StrId::STR_CLIPPING_STORAGE, &CrossPointSettings::clippingStorage,
-                          {StrId::STR_CLIPPING_SINGLE_FILE, StrId::STR_CLIPPING_PER_BOOK}, "clippingStorage",
-                          StrId::STR_CAT_CLIPPINGS),
+        SettingInfo::Toggle(StrId::STR_CLIPPING_LOG, &CrossPointSettings::clippingLog, "clippingLog",
+                            StrId::STR_CAT_CLIPPINGS),
         SettingInfo::Enum(StrId::STR_CLIP_NAV_MODE, &CrossPointSettings::clipNavMode,
                           {StrId::STR_CLIP_NAV_LINE, StrId::STR_CLIP_NAV_WORD}, "clipNavMode",
                           StrId::STR_CAT_CLIPPINGS),
