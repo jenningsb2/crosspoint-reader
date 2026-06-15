@@ -134,7 +134,15 @@ class CrossPointSettings {
   };
 
   // Short power button press actions
-  enum SHORT_PWRBTN { IGNORE = 0, SLEEP = 1, PAGE_TURN = 2, FORCE_REFRESH = 3, FOOTNOTES = 4, SHORT_PWRBTN_COUNT };
+  enum SHORT_PWRBTN {
+    IGNORE = 0,
+    SLEEP = 1,
+    PAGE_TURN = 2,
+    FORCE_REFRESH = 3,
+    FOOTNOTES = 4,
+    CLIPPING = 5,
+    SHORT_PWRBTN_COUNT
+  };
 
   // Hide battery percentage
   enum HIDE_BATTERY_PERCENTAGE { HIDE_NEVER = 0, HIDE_READER = 1, HIDE_ALWAYS = 2, HIDE_BATTERY_PERCENTAGE_COUNT };
@@ -154,6 +162,12 @@ class CrossPointSettings {
   enum IMAGE_RENDERING { IMAGES_DISPLAY = 0, IMAGES_PLACEHOLDER = 1, IMAGES_SUPPRESS = 2, IMAGE_RENDERING_COUNT };
 
   enum TILT_PAGE_TURN { TILT_OFF = 0, TILT_NORMAL = 1, TILT_NVERTED = 2, TILT_PAGE_TURN_COUNT };
+  // Clip selector navigation scheme
+  enum CLIP_NAV_MODE : uint8_t { CLIP_NAV_DIRECTIONAL = 0, CLIP_NAV_CONTINUOUS = 1, CLIP_NAV_MODE_COUNT };
+  // Highlight export format (used by the reader's "Export Highlights" action)
+  enum EXPORT_FORMAT : uint8_t { EXPORT_TXT = 0, EXPORT_JSON = 1, EXPORT_BOTH = 2, EXPORT_FORMAT_COUNT };
+  // Annotation underline visibility
+  enum ANNOTATION_VISIBILITY : uint8_t { ANNOT_VISIBLE = 0, ANNOT_HIDDEN = 1, ANNOTATION_VISIBILITY_COUNT };
 
   enum QUICK_RESUME_SLEEP_SCREEN {
     QUICK_RESUME_NEVER = 0,
@@ -250,6 +264,14 @@ class CrossPointSettings {
   uint8_t tiltPageTurn = TILT_OFF;
   // Language setting (Language enum index, default 0 = EN)
   uint8_t language = 0;
+  // Clippings settings
+  uint8_t clipNavMode = CLIP_NAV_DIRECTIONAL;
+  uint8_t annotationVisibility = ANNOT_VISIBLE;
+  uint8_t exportFormat = EXPORT_BOTH;
+  // Kindle-style running log: append each highlight once to /My Clippings.txt at creation.
+  // Append-only (deletions are not reflected). Off by default; the clean per-book export
+  // (Export Highlights) is the modern, deletion-accurate path.
+  uint8_t clippingLog = 0;
   // Quick Resume: keep current content visible with moon icon instead of showing a static sleep screen.
   uint8_t quickResumeSleepScreen = QUICK_RESUME_NEVER;
 
