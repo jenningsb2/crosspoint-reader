@@ -82,8 +82,10 @@ class ClipSelectionActivity final : public Activity {
   int marginTop;
   int marginLeft;
 
-  std::unique_ptr<uint8_t[]> savedBuffer;
-  size_t savedBufferSize = 0;
+  // Re-rendered fresh on every cursor move from this cached Page (glyphs stay resident,
+  // so the redraw is cheap). Caching the Page — not a full 48 KB framebuffer copy — keeps
+  // peak heap low and avoids needing a contiguous 48 KB block on a fragmented heap.
+  std::unique_ptr<Page> currentPage;
   int currentDisplayPage = 0;
   int savedSectionPage = 0;
 

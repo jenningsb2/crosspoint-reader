@@ -7,7 +7,6 @@
 #include <Logging.h>
 
 #include <algorithm>
-#include <cstring>
 
 #include "../ActivityResult.h"
 #include "MappedInputManager.h"
@@ -44,26 +43,24 @@ void ClipSelectionActivity::onEnter() {
   }
 
   savedSectionPage = section.currentPage;
-  savedBufferSize = renderer.getBufferSize();
-  savedBuffer = makeUniqueNoThrow<uint8_t[]>(savedBufferSize);
-  if (!savedBuffer) {
-    LOG_ERR("CLIP", "malloc failed: %u bytes", savedBufferSize);
+
+  // Load page 0's layout; render() paints it fresh each frame (the previous activity's
+  // menu may still be on screen when onEnter() runs).
+  switchToPage(0);
+  if (!currentPage) {
+    LOG_ERR("CLIP", "Failed to load initial page");
     ActivityResult result;
     result.isCancelled = true;
     setResult(std::move(result));
     finish();
     return;
   }
-
-  // Re-render page 0 to get a clean framebuffer — the previous activity (menu)
-  // may still be painted on screen when onEnter() runs.
-  switchToPage(0);
   requestUpdate();
 }
 
 void ClipSelectionActivity::onExit() {
   section.currentPage = savedSectionPage;
-  savedBuffer.reset();
+  currentPage.reset();
   Activity::onExit();
 }
 
@@ -251,15 +248,16 @@ void ClipSelectionActivity::loop() {
 }
 
 void ClipSelectionActivity::render(RenderLock&&) {
-  if (!savedBuffer) return;
-
   if (needsPageSwitch) {
     switchToPage(words[cursorIdx].pageIdx);
     needsPageSwitch = false;
   }
+  if (!currentPage) return;
 
-  // Restore the saved page framebuffer, then draw highlights on top
-  memcpy(renderer.getFrameBuffer(), savedBuffer.get(), savedBufferSize);
+  // Re-render the page fresh, then draw the selection/cursor on top. Glyphs were prewarmed
+  // resident in switchToPage(), so this redraw is cheap and avoids holding a 48 KB copy.
+  renderer.clearScreen();
+  currentPage->render(renderer, fontId, marginLeft, marginTop);
   drawHighlights();
 
   if (config.render.showButtonHints) {
@@ -284,10 +282,10 @@ void ClipSelectionActivity::switchToPage(int pageIdx) {
 
   // Prewarm this page's glyphs PERSISTENTLY (per style), not via a PrewarmScope whose
   // destructor clears the cache. The glyphs must stay resident after this returns because
-  // render() -> drawHighlights() redraws the cursor/selection words on every cursor move;
-  // with on-demand SD-card fonts a cold redraw of a large selection (e.g. a top↔bottom
-  // jump) re-reads each glyph from the 8-entry overflow buffer and takes seconds. Prewarm
-  // from the activity's own word list — exactly the glyphs drawHighlights will redraw.
+  // render() repaints the whole page plus the cursor/selection words on every cursor move;
+  // with on-demand SD-card fonts a cold redraw re-reads each glyph from the 8-entry overflow
+  // buffer and takes seconds. Prewarm from the activity's own word list — exactly the glyphs
+  // render() will redraw.
   auto* fcm = renderer.getFontCacheManager();
   if (fcm) {
     std::string styleText[4];
@@ -302,10 +300,8 @@ void ClipSelectionActivity::switchToPage(int pageIdx) {
     }
   }
 
-  renderer.clearScreen();
-  page->render(renderer, fontId, marginLeft, marginTop);  // resident glyphs -> fast
-  // displayBuffer is intentionally omitted here — render() always controls the final display call
-  memcpy(savedBuffer.get(), renderer.getFrameBuffer(), savedBufferSize);
+  // Cache the layout only — render() paints it. No 48 KB framebuffer copy is held.
+  currentPage = std::move(page);
   currentDisplayPage = pageIdx;
 }
 
