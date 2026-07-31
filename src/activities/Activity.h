@@ -8,10 +8,13 @@
 
 #include "ActivityManager.h"  // for using the ActivityManager singleton
 #include "ActivityResult.h"
+#include "AutoSleepSyncPolicy.h"
 #include "GfxRenderer.h"
 #include "MappedInputManager.h"
 #include "RenderLock.h"
 #include "util/ScreenshotInfo.h"
+
+using SleepCommitCallback = void (*)();
 
 class Activity {
   friend class ActivityManager;
@@ -44,6 +47,15 @@ class Activity {
   virtual bool skipLoopDelay() { return false; }
   virtual bool preventAutoSleep() { return false; }
   virtual bool isReaderActivity() const { return false; }
+  virtual bool supportsAutoSleepSync() const { return false; }
+  // True when the reading position is at or behind the persisted last-synced
+  // marker, letting an eligible sleep skip the network preflight entirely
+  // (equal: nothing to sync; behind: the user is rereading and a Smart pull
+  // would yank them forward to the remote high-water mark).
+  virtual bool shouldSkipAutoSleepSync() const { return false; }
+  virtual bool prepareAutoSleepSync(SleepCommitCallback, AutoSleepSyncDeadline, std::unique_ptr<Activity>&) {
+    return false;
+  }
   // Returns true when the activity schedules its own forced refresh.
   virtual bool handleForcedRefresh() { return false; }
   virtual bool isHomeActivity() const { return false; }
